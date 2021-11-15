@@ -8,6 +8,7 @@
 import UIKit
 import MessageKit
 import InputBarAccessoryView
+import Photos
 
 class ChatVC: MessagesViewController {
     
@@ -22,6 +23,16 @@ class ChatVC: MessagesViewController {
     let channel: Channel
     var sender = Sender(senderId: "any_unique_id", displayName: "jake")
     var messages = [Message]()
+    private var isSendingPhoto = false {
+      didSet {
+        messageInputBar.leftStackViewItems.forEach { item in
+          guard let item = item as? InputBarButtonItem else {
+            return
+          }
+          item.isEnabled = !self.isSendingPhoto
+        }
+      }
+    }
     
     init(channel: Channel) {
       self.channel = channel
@@ -88,7 +99,15 @@ class ChatVC: MessagesViewController {
     }
     
     @objc private func didTapCameraButton() {
-        print("did tap camera button !!!")
+        let picker = UIImagePickerController()
+        picker.delegate = self
+        
+        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+            picker.sourceType = .camera
+        } else {
+            picker.sourceType = .photoLibrary
+        }
+        present(picker, animated: true)
     }
 }
 
@@ -151,5 +170,36 @@ extension ChatVC: InputBarAccessoryViewDelegate {
         
         insertNewMessage(message)
         inputBar.inputTextView.text.removeAll()
+    }
+}
+
+extension ChatVC: UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+    func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
+        picker.dismiss(animated: true)
+        
+        if let asset = info[.phAsset] as? PHAsset {
+            let imageSize = CGSize(width: 500, height: 500)
+            PHImageManager.default().requestImage(for: asset,
+                                                     targetSize: imageSize,
+                                                     contentMode: .aspectFit,
+                                                     options: nil) { image, _ in
+                guard let image = image else { return }
+                self.sendPhoto(image)
+            }
+        } else if let image = info[.originalImage] as? UIImage {
+            sendPhoto(image)
+        }
+    }
+    
+    private func sendPhoto(_ image: UIImage) {
+        isSendingPhoto = true
+        // TODO: upload to firebase
+        isSendingPhoto = false
+        let message = Message(image: image)
+        insertNewMessage(message)
+    }
+    
+    func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+        picker.dismiss(animated: true)
     }
 }
