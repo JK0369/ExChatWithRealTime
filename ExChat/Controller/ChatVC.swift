@@ -9,6 +9,8 @@ import UIKit
 import MessageKit
 import InputBarAccessoryView
 import Photos
+import FirebaseFirestore
+import FirebaseAuth
 
 class ChatVC: MessagesViewController {
     
@@ -20,8 +22,9 @@ class ChatVC: MessagesViewController {
         return button
     }()
     
+    private let user: User
+    let chatFirestoreStream = ChatFirestoreStream()
     let channel: Channel
-    var sender = Sender(senderId: "any_unique_id", displayName: "jake")
     var messages = [Message]()
     private var isSendingPhoto = false {
       didSet {
@@ -34,13 +37,21 @@ class ChatVC: MessagesViewController {
       }
     }
     
-    init(channel: Channel) {
-      self.channel = channel
-      super.init(nibName: nil, bundle: nil)
+    init(user: User, channel: Channel) {
+        self.user = user
+        self.channel = channel
+        super.init(nibName: nil, bundle: nil)
+        
+        title = channel.name
     }
     
     required init?(coder: NSCoder) {
         fatalError()
+    }
+
+    deinit {
+        chatFirestoreStream.removeListener()
+        navigationController?.navigationBar.prefersLargeTitles = true
     }
     
     override func viewDidLoad() {
@@ -51,10 +62,7 @@ class ChatVC: MessagesViewController {
         setupMessageInputBar()
         removeOutgoingMessageAvatars()
         addCameraBarButtonToMessageInputBar()
-    }
-    
-    deinit {
-        navigationController?.navigationBar.prefersLargeTitles = true
+        listenToMessages()
     }
 
     private func confirmDelegates() {
@@ -68,7 +76,6 @@ class ChatVC: MessagesViewController {
     private func configure() {
         title = channel.name
         navigationController?.navigationBar.prefersLargeTitles = false
-        messages = getMessagesMock()
     }
     
     private func setupMessageInputBar() {
@@ -98,6 +105,37 @@ class ChatVC: MessagesViewController {
         messagesCollectionView.reloadData()
     }
     
+    private func listenToMessages() {
+        guard let id = channel.id else {
+            navigationController?.popViewController(animated: true)
+            return
+        }
+        
+        chatFirestoreStream.subscribe(id: id) { [weak self] result in
+            switch result {
+            case .success(let messages):
+                self?.loadImageAndUpdateCells(messages)
+            case .failure(let error):
+                print(error)
+            }
+        }
+    }
+    
+    private func loadImageAndUpdateCells(_ messages: [Message]) {
+        messages.forEach { message in
+            var message = message
+            if let url = message.downloadURL {
+                FirebaseStorageManager.downloadImage(url: url) { [weak self] image in
+                    guard let image = image else { return }
+                    message.image = image
+                    self?.insertNewMessage(message)
+                }
+            } else {
+                insertNewMessage(message)
+            }
+        }
+    }
+    
     @objc private func didTapCameraButton() {
         let picker = UIImagePickerController()
         picker.delegate = self
@@ -113,7 +151,7 @@ class ChatVC: MessagesViewController {
 
 extension ChatVC: MessagesDataSource {
     func currentSender() -> SenderType {
-        return sender
+        return Sender(senderId: user.uid, displayName: UserDefaultManager.displayName)
     }
     
     func numberOfSections(in messagesCollectionView: MessagesCollectionView) -> Int {
@@ -163,12 +201,15 @@ extension ChatVC: MessagesDisplayDelegate {
 
 extension ChatVC: InputBarAccessoryViewDelegate {
     func inputBar(_ inputBar: InputBarAccessoryView, didPressSendButtonWith text: String) {
-        let message = Message(content: text)
+        let message = Message(user: user, content: text)
         
-        // TODO
-//        saveMessageAndScrollToLastItem(message)
-        
-        insertNewMessage(message)
+        chatFirestoreStream.save(message) { [weak self] error in
+            if let error = error {
+                print(error)
+                return
+            }
+            self?.messagesCollectionView.scrollToLastItem()
+        }
         inputBar.inputTextView.text.removeAll()
     }
 }
@@ -193,10 +234,15 @@ extension ChatVC: UIImagePickerControllerDelegate, UINavigationControllerDelegat
     
     private func sendPhoto(_ image: UIImage) {
         isSendingPhoto = true
-        // TODO: upload to firebase
-        isSendingPhoto = false
-        let message = Message(image: image)
-        insertNewMessage(message)
+        FirebaseStorageManager.uploadImage(image: image, channel: channel) { [weak self] url in
+            self?.isSendingPhoto = false
+            guard let user = self?.user, let url = url else { return }
+            
+            var message = Message(user: user, image: image)
+            message.downloadURL = url
+            self?.chatFirestoreStream.save(message)
+            self?.messagesCollectionView.scrollToLastItem()
+        }
     }
     
     func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {

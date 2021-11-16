@@ -6,8 +6,7 @@
 //
 
 import Foundation
-
-// Channel.swift
+import FirebaseFirestore
 
 struct Channel {
     var id: String?
@@ -16,6 +15,29 @@ struct Channel {
     init(id: String? = nil, name: String) {
         self.id = id
         self.name = name
+    }
+    
+    init?(_ document: QueryDocumentSnapshot) {
+        let data = document.data()
+        
+        guard let name = data["name"] as? String else {
+            return nil
+        }
+        
+        id = document.documentID
+        self.name = name
+    }
+}
+
+extension Channel: DatabaseRepresentation {
+    var representation: [String: Any] {
+        var rep = ["name": name]
+        
+        if let id = id {
+            rep["id"] = id
+        }
+        
+        return rep
     }
 }
 

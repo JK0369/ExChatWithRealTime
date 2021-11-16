@@ -8,6 +8,7 @@
 import Foundation
 import MessageKit
 import UIKit
+import Firebase
 
 struct Message: MessageType {
     
@@ -30,21 +31,59 @@ struct Message: MessageType {
     var image: UIImage?
     var downloadURL: URL?
     
-    init(content: String) {
-        sender = Sender(senderId: "id(TODO...)", displayName: "displayName(TODO...)")
+    init(user: User, content: String) {
+        sender = Sender(senderId: user.uid, displayName: UserDefaultManager.displayName)
         self.content = content
         sentDate = Date()
         id = nil
     }
     
-    init(image: UIImage) {
-        sender = Sender(senderId: "id(TODO...)", displayName: "displayName(TODO...)")
+    init(user: User, image: UIImage) {
+        sender = Sender(senderId: user.uid, displayName: UserDefaultManager.displayName)
         self.image = image
         sentDate = Date()
         content = ""
         id = nil
     }
     
+    init?(document: QueryDocumentSnapshot) {
+        let data = document.data()
+        guard let sentDate = data["created"] as? Timestamp,
+              let senderId = data["senderId"] as? String,
+              let senderName = data["senderName"] as? String else { return nil }
+        id = document.documentID
+        self.sentDate = sentDate.dateValue()
+        sender = Sender(senderId: senderId, displayName: senderName)
+        
+        if let content = data["content"] as? String {
+            self.content = content
+            downloadURL = nil
+        } else if let urlString = data["url"] as? String, let url = URL(string: urlString) {
+            downloadURL = url
+            content = ""
+        } else {
+            return nil
+        }
+    }
+    
+}
+
+extension Message: DatabaseRepresentation {
+    var representation: [String : Any] {
+        var representation: [String: Any] = [
+            "created": sentDate,
+            "senderId": sender.senderId,
+            "senderName": sender.displayName
+        ]
+        
+        if let url = downloadURL {
+            representation["url"] = url.absoluteString
+        } else {
+            representation["content"] = content
+        }
+        
+        return representation
+    }
 }
 
 extension Message: Comparable {
